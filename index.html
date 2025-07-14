@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speaker Fixer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            /* Pink Theme Variables */
+            --bg-color: #fff5f7; 
+            --text-color: #831843; 
+            --card-bg: #ffffff; 
+            --accent-color: #ec4899;
+            --muted-text: #9ca3af;
+        }
+        .progress-bar-inner, .btn-mode, .btn-tab, .btn-wizard {
+            transition: all 0.2s ease-in-out;
+        }
+        .btn-mode:hover, .btn-wizard:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        .btn-tab.active {
+            color: var(--accent-color);
+            border-bottom-color: var(--accent-color);
+        }
+        canvas {
+            width: 100%;
+            height: 100px;
+            border-radius: 0.5rem;
+            background-color: var(--bg-color);
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4 transition-colors duration-300 bg-[var(--bg-color)] text-[var(--text-color)]">
+    <div class="p-2 sm:p-4 max-w-md mx-auto bg-[var(--card-bg)] rounded-2xl shadow-2xl w-full relative">
+
+        <div class="flex border-b border-gray-200 mb-6 text-xs sm:text-sm">
+            <button id="tab-wizard" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">Wizard</button>
+            <button id="tab-cleaner" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">Cleaner</button>
+            <button id="tab-mic-test" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">Mic Test</button>
+            <button id="tab-pro-tools" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">Pro Tools</button>
+            <button id="tab-about" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">About</button>
+            <button id="tab-privacy" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">Privacy</button>
+            <button id="tab-contact" class="btn-tab flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent">Contact</button>
+        </div>
+
+        <div id="main-content" class="px-2 sm:px-4 pb-4 min-h-[350px]"></div>
+
+        <footer class="text-center pt-4 mt-4 border-t border-gray-200">
+            <p class="text-sm" style="color: var(--muted-text);">© 2025 Siddhartha Kedia</p>
+        </footer>
+        
+    </div>
+
+    <script>
+        // --- Global State & Audio Nodes ---
+        let audioContext, oscillator, gainNode, analyser, panner, animationFrameId, micSource;
+        let mediaRecorder, recordedChunks = [];
+        let cleaningInterval, progressInterval;
+        let isPlaying = false;
+        
+        const mainContent = document.getElementById('main-content');
+        
+        // --- Templates (English) ---
+        const wizardStep1HTML = `<div class="text-center"><h1 class="text-3xl font-bold mb-2">Diagnostic Wizard</h1><p class="mb-6 text-gray-500">What's the problem with your speaker?</p><div class="space-y-4"><button class="btn-wizard w-full bg-blue-500 text-white p-3 rounded-lg" onclick="wizardGoTo(2, {reason: 'water'})">💧 Water Damage</button><button class="btn-wizard w-full bg-yellow-500 text-white p-3 rounded-lg" onclick="wizardGoTo(2, {reason: 'dust'})">💨 Muffled / Dusty Sound</button><button class="btn-wizard w-full bg-gray-500 text-white p-3 rounded-lg" onclick="wizardGoTo(2, {reason: 'checkup'})">🤔 General Checkup</button></div></div>`;
+        const cleanerSelectionHTML = `<div id="cleaner-selection-state" class="text-center"><h1 class="text-3xl font-bold mb-2">Manual Cleaner</h1><p class="mb-6 text-gray-500">Choose a mode to eject water or dust. Turn volume to maximum.</p><p class="text-sm mb-4 text-gray-400">Tip: Use the 'Mic Test' tab to record before and after.</p><div class="space-y-4"><button onclick="startCleaning(1)" class="btn-mode w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-5 rounded-lg">Mode 1: Gentle</button><button onclick="startCleaning(2)" class="btn-mode w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-5 rounded-lg">Mode 2: Strong</button><button onclick="startCleaning(3)" class="btn-mode w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-5 rounded-lg">Mode 3: Ultimate</button></div></div>`;
+        const cleaningStateHTML = `<div id="cleaning-state" class="text-center"><h1 id="cleaning-title" class="text-3xl font-bold mb-2">Cleaning...</h1><p class="mb-4 text-gray-500">Place phone with speaker facing down.</p><canvas id="visualizer-canvas"></canvas><div class="w-full bg-gray-200 rounded-full h-2.5 my-4"><div id="progress-bar" class="bg-green-500 h-2.5 rounded-full" style="width: 0%"></div></div><button id="stop-button" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-5 rounded-lg">Stop</button></div>`;
+        const micTestHTML = `<div id="mic-test-state" class="text-center"><h1 class="text-3xl font-bold mb-2">Microphone Test</h1><p class="mb-4 text-gray-500">Record your voice to test the microphone.</p><canvas id="mic-visualizer-canvas"></canvas><div class="mt-4 space-x-4"><button id="record-btn" class="w-24 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg">Record</button><button id="playback-btn" class="w-24 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg" disabled>Playback</button></div></div>`;
+        const proToolsHTML = `<div id="pro-tools-state" class="text-center"><h1 class="text-3xl font-bold mb-2">Pro Tools</h1><div class="text-left mt-6 border-t border-gray-200 pt-4"><h3 class="font-semibold mb-2">Speaker Tester</h3><div class="grid grid-cols-3 gap-2"><button onclick="runTest('left')" class="btn-mode bg-indigo-500 text-white p-2 rounded-lg text-sm">Left</button><button onclick="runTest('right')" class="btn-mode bg-purple-500 text-white p-2 rounded-lg text-sm">Right</button><button onclick="runTest('stereo')" class="btn-mode bg-teal-500 text-white p-2 rounded-lg text-sm">Stereo</button></div></div><div class="text-left mt-6 border-t border-gray-200 pt-4"><h3 class="font-semibold mb-2">Sound Library</h3><div class="grid grid-cols-2 gap-2"><button onclick="runBassSweep()" class="btn-mode bg-gray-700 text-white p-2 rounded-lg text-sm">Bass Sweep</button><button onclick="runTrebleTest()" class="btn-mode bg-gray-700 text-white p-2 rounded-lg text-sm">Treble Test</button></div></div><div class="text-left mt-6 border-t border-gray-200 pt-4"><label for="freq-slider" class="font-semibold">Manual Frequency: <span id="freq-value">300</span> Hz</label><input id="freq-slider" type="range" min="100" max="1000" value="300" class="w-full h-2 bg-gray-200 rounded-lg cursor-pointer my-2"><button id="manual-play-button" class="btn-mode w-full bg-green-600 text-white p-2 rounded-lg text-sm">Play</button></div></div>`;
+        const aboutHTML = `<div class="text-left space-y-4 text-gray-600"><h1 class="text-3xl font-bold mb-2 text-center text-pink-800">About Speaker Fixer</h1><p>Welcome to Speaker Fixer, your go-to solution for audio problems!</p><p>We've all been there – that heart-stopping moment when your phone takes an unexpected dip in water, or when your favorite speaker starts sounding muffled and unclear due to accumulated dust. In the past, this often meant a costly trip to the repair shop. We thought there had to be a better way.</p><div><h2 class="text-xl font-semibold text-pink-800">Our Mission</h2><p>Our mission is simple: to provide a free, easy-to-use, and effective tool that empowers anyone to fix their audio issues right from their browser. We believe that simple problems shouldn't require complicated solutions.</p></div><div><h2 class="text-xl font-semibold text-pink-800">How Does It Work?</h2><p>Speaker Fixer uses a combination of specific sound frequencies and wave patterns. When you play these sounds, they create strong vibrations within your device's speaker module. These vibrations are precisely calibrated to dislodge and eject trapped water droplets and fine dust particles, restoring your speaker's clarity and performance.</p></div><p>This project was created by Siddhartha Kedia with a passion for finding simple solutions to common tech problems. We hope you find this tool helpful!</p></div>`;
+        const privacyHTML = `<div class="text-left space-y-4 text-gray-600"><h1 class="text-3xl font-bold mb-2 text-center text-pink-800">Privacy Policy</h1><p>Your privacy is important to us. It is Speaker Fixer's policy to respect your privacy regarding any information we may collect from you across our website.</p><div><h2 class="text-xl font-semibold text-pink-800">Information We Collect</h2><p>This is a client-side application. We do not collect, save, or have access to any personal data from our users. All audio processing and microphone testing happens directly in your browser. We do not store your recordings or any other personal information on our servers.</p></div><div><h2 class="text-xl font-semibold text-pink-800">Microphone Access</h2><p>The "Mic Test" feature requires access to your device's microphone. Your browser will ask for your permission to use the microphone. This permission is only used for the duration of the test to visualize and record audio. The audio data is not sent to us or any third party.</p></div><div><h2 class="text-xl font-semibold text-pink-800">Third-Party Services</h2><p>This site uses Google Fonts and Tailwind CSS for styling. These services may collect data as per their own privacy policies.</p></div><p>Your continued use of our website will be regarded as acceptance of our practices around privacy. If you have any questions about how we handle user data and personal information, feel free to contact us.</p><p>This policy is effective as of 14 July 2025.</p></div>`;
+        const contactHTML = `<div class="text-center space-y-4 text-gray-600"><h1 class="text-3xl font-bold mb-2 text-pink-800">Contact Us</h1><p>Have questions, feedback, or suggestions? We'd love to hear from you!</p><p>You can reach out to the creator, Siddhartha Kedia, via email.</p><div class="mt-4 p-3 bg-gray-100 rounded-lg flex items-center justify-between"><span id="email-text" class="text-gray-700">siddharthakedia80@gmail.com</span><button id="copy-email-btn" class="bg-pink-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-pink-600">Copy</button></div></div>`;
+
+        const DURATION = 15000;
+        const MODES = { 1: { name: 'Gentle', pattern: [{ freq: 165, type: 'sine' }] }, 2: { name: 'Strong', pattern: [{ freq: 250, type: 'square' }] }, 3: { name: 'Ultimate', pattern: [ { freq: 150, type: 'sine' }, { freq: 180, type: 'sine' }, { freq: 220, type: 'square' }, { freq: 260, type: 'square' }, { freq: 300, type: 'sawtooth' } ]}};
+        let currentPatternIndex = 0;
+
+        function initAudio() {
+            if (!audioContext || audioContext.state === 'closed') {
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048;
+                    panner = audioContext.createStereoPanner();
+                } catch (e) { console.error("Audio API not supported", e); }
+            }
+        }
+
+        function playSound(soundParams) {
+            if(!soundParams) return;
+            const { freq, type = 'sine', duration = null, pan = 0, vol = 1, rampTo = null, rampTime = 0 } = soundParams;
+            initAudio();
+            
+            if (oscillator) oscillator.disconnect();
+            try { analyser.disconnect(); } catch(e) {}
+            try { panner.disconnect(); } catch(e) {}
+            if (micSource) micSource.disconnect();
+            
+            panner.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            oscillator = audioContext.createOscillator();
+            gainNode = audioContext.createGain();
+            oscillator.connect(gainNode).connect(panner);
+
+            oscillator.type = type;
+            panner.pan.setValueAtTime(pan, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(vol, audioContext.currentTime);
+            oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
+            if(rampTo && rampTime) {
+                oscillator.frequency.exponentialRampToValueAtTime(rampTo, audioContext.currentTime + rampTime);
+            }
+            
+            oscillator.start();
+            if (duration) oscillator.stop(audioContext.currentTime + duration);
+        }
+
+        function stopSound() {
+            if (oscillator) {
+                oscillator.stop();
+                oscillator.disconnect();
+                oscillator = null;
+            }
+            isPlaying = false;
+        }
+
+        function visualize(canvasId, sourceNode) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !sourceNode) return;
+            const canvasCtx = canvas.getContext('2d');
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            const draw = () => {
+                if (!isPlaying && !(mediaRecorder && mediaRecorder.state === "recording")) {
+                    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    return;
+                }
+                animationFrameId = requestAnimationFrame(draw);
+                analyser.getByteTimeDomainData(dataArray);
+
+                canvasCtx.fillStyle = 'var(--bg-color)';
+                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+                canvasCtx.lineWidth = 2;
+                canvasCtx.strokeStyle = 'var(--accent-color)';
+                canvasCtx.beginPath();
+
+                const sliceWidth = canvas.width * 1.0 / bufferLength;
+                let x = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    const v = dataArray[i] / 128.0;
+                    const y = v * canvas.height / 2;
+                    if (i === 0) canvasCtx.moveTo(x, y); else canvasCtx.lineTo(x, y);
+                    x += sliceWidth;
+                }
+                canvasCtx.lineTo(canvas.width, canvas.height / 2);
+                canvasCtx.stroke();
+            };
+            draw();
+        }
+
+        function startCleaning(modeId, fromWizard = false) {
+            if (isPlaying) return;
+            const mode = MODES[modeId];
+            mainContent.innerHTML = cleaningStateHTML;
+            document.getElementById('cleaning-title').textContent = mode.name + '...';
+            document.getElementById('stop-button').addEventListener('click', () => stopCleaning(false, fromWizard));
+            
+            isPlaying = true;
+            currentPatternIndex = 0;
+
+            const playPattern = () => { playSound(mode.pattern[currentPatternIndex]); currentPatternIndex = (currentPatternIndex + 1) % mode.pattern.length; };
+            playPattern();
+            if (mode.pattern.length > 1) cleaningInterval = setInterval(playPattern, 500);
+            visualize('visualizer-canvas', panner);
+
+            let startTime = Date.now();
+            progressInterval = setInterval(() => {
+                const progress = Math.min(((Date.now() - startTime) / DURATION) * 100, 100);
+                const progressBar = document.getElementById('progress-bar');
+                if(progressBar) progressBar.style.width = progress + '%';
+                if (progress >= 100) stopCleaning(true, fromWizard);
+            }, 100);
+        }
+
+        function stopCleaning(isFinished = false, fromWizard = false) {
+            isPlaying = false;
+            clearInterval(cleaningInterval); clearInterval(progressInterval);
+            if(animationFrameId) cancelAnimationFrame(animationFrameId);
+            stopSound();
+            currentPatternIndex = 0;
+            
+            if (fromWizard) {
+                wizardGoTo(3, { success: isFinished });
+            } else {
+                switchTab('cleaner');
+                if (isFinished) {
+                    const title = mainContent.querySelector('h1');
+                    if(title) { title.textContent = 'Cleaning Complete!'; setTimeout(() => { if(mainContent.querySelector('h1')) mainContent.querySelector('h1').textContent = 'Manual Cleaner'; }, 2000); }
+                }
+            }
+        }
+
+        function runTest(pan) { const panValue = pan === 'left' ? -1 : pan === 'right' ? 1 : 0; playSound({freq: 440, duration: 0.5, pan: panValue, vol: 0.5}); }
+        function runBassSweep() { playSound({freq: 20, rampTo: 200, rampTime: 1, duration: 1}); }
+        function runTrebleTest() { playSound({freq: 2000, rampTo: 8000, rampTime: 1, duration: 1}); }
+        async function playDustCleaner() { if (isPlaying) return; isPlaying = true; for (let i = 0; i < 10; i++) { playSound({ freq: 1000 + Math.random() * 1000, type: 'square', duration: 0.05, vol: 1 }); await new Promise(res => setTimeout(res, 100)); } isPlaying = false; }
+
+        function switchTab(tabId) {
+            stopSound();
+            if(animationFrameId) cancelAnimationFrame(animationFrameId);
+            clearInterval(cleaningInterval); clearInterval(progressInterval);
+            isPlaying = false; currentPatternIndex = 0;
+            if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+
+            document.querySelectorAll('.btn-tab').forEach(t => t.classList.remove('active'));
+            
+            const tabButton = document.getElementById(`tab-${tabId}`);
+            if (tabButton) {
+                tabButton.classList.add('active');
+            }
+            
+            if (tabId === 'wizard') mainContent.innerHTML = wizardStep1HTML;
+            else if (tabId === 'cleaner') mainContent.innerHTML = cleanerSelectionHTML;
+            else if (tabId === 'mic-test') setupMicTest();
+            else if (tabId === 'pro-tools') setupProTools();
+            else if (tabId === 'about') mainContent.innerHTML = aboutHTML;
+            else if (tabId === 'privacy') mainContent.innerHTML = privacyHTML;
+            else if (tabId === 'contact') {
+                mainContent.innerHTML = contactHTML;
+                document.getElementById('copy-email-btn').addEventListener('click', (e) => {
+                    const email = document.getElementById('email-text').innerText;
+                    const textarea = document.createElement('textarea');
+                    textarea.value = email;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    
+                    const button = e.target;
+                    button.innerText = 'Copied!';
+                    setTimeout(() => { button.innerText = 'Copy'; }, 2000);
+                });
+            }
+        }
+
+        function wizardGoTo(step, data) {
+            if (step === 2) {
+                let recommendation, modeId;
+                if (data.reason === 'water') { recommendation = "For water damage, the 'Ultimate' mode is best as it uses varying frequencies."; modeId = 3; }
+                else if (data.reason === 'dust') { recommendation = "For dusty sound, the 'Strong' mode's sharp sound waves work well."; modeId = 2; }
+                else { recommendation = "For a general checkup, the 'Gentle' mode is a good place to start."; modeId = 1; }
+                mainContent.innerHTML = `<div class="text-center"><h1 class="text-3xl font-bold mb-2">Recommendation</h1><p class="mb-6 text-gray-500">${recommendation}</p><div class="space-y-4"><button class="btn-wizard w-full bg-green-500 text-white p-3 rounded-lg" onclick="startCleaning(${modeId}, true)">Start Recommended Cleaning</button><button class="btn-wizard w-full bg-gray-500 text-white p-3 rounded-lg mt-2" onclick="switchTab('cleaner')">Choose Manually</button></div></div>`;
+            } else if (step === 3) {
+                const message = data.success ? "Cleaning complete! Is the sound improved?" : "Cleaning was stopped. Do you want to try again?";
+                mainContent.innerHTML = `<div class="text-center"><h1 class="text-3xl font-bold mb-2">Result</h1><p class="mb-6 text-gray-500">${message}</p><div class="space-y-4"><button class="btn-wizard w-full bg-green-500 text-white p-3 rounded-lg" onclick="switchTab('wizard')">Yes, it's fixed!</button><button class="btn-wizard w-full bg-orange-500 text-white p-3 rounded-lg" onclick="switchTab('cleaner')">No, let me try another mode</button></div></div>`;
+            }
+        }
+
+        async function setupMicTest() {
+            mainContent.innerHTML = micTestHTML;
+            const recordBtn = document.getElementById('record-btn');
+            const playbackBtn = document.getElementById('playback-btn');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                initAudio();
+                
+                try { analyser.disconnect(); } catch(e) {}
+                if (micSource) micSource.disconnect();
+                
+                micSource = audioContext.createMediaStreamSource(stream);
+                micSource.connect(analyser);
+
+                recordBtn.onclick = () => {
+                    if (mediaRecorder && mediaRecorder.state === "recording") {
+                        mediaRecorder.stop();
+                        recordBtn.textContent = "Record";
+                        recordBtn.classList.remove('bg-gray-500');
+                        recordBtn.classList.add('bg-red-600');
+                    } else {
+                        recordedChunks = [];
+                        mediaRecorder = new MediaRecorder(stream);
+                        mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+                        mediaRecorder.onstop = () => { playbackBtn.disabled = false; };
+                        mediaRecorder.start();
+                        visualize('mic-visualizer-canvas', micSource);
+                        recordBtn.textContent = "Stop";
+                        recordBtn.classList.remove('bg-red-600');
+                        recordBtn.classList.add('bg-gray-500');
+                        playbackBtn.disabled = true;
+                    }
+                };
+
+                playbackBtn.onclick = () => {
+                    if (recordedChunks.length === 0) return;
+                    const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+                    const audioURL = window.URL.createObjectURL(blob);
+                    const audio = new Audio(audioURL);
+                    audio.play();
+                };
+            } catch (err) {
+                mainContent.querySelector('#mic-test-state').innerHTML += `<p class="text-red-500 mt-4">Error: Could not access microphone. Please grant permission.</p>`;
+                console.error(err);
+            }
+        }
+        
+        function setupProTools() {
+            mainContent.innerHTML = proToolsHTML;
+            const slider = document.getElementById('freq-slider');
+            const valueSpan = document.getElementById('freq-value');
+            const playButton = document.getElementById('manual-play-button');
+            slider.addEventListener('input', () => valueSpan.textContent = slider.value);
+            playButton.addEventListener('click', () => {
+                if (isPlaying) { stopSound(); playButton.textContent = 'Play'; playButton.classList.replace('bg-red-600', 'bg-green-600'); }
+                else { playSound({freq: parseInt(slider.value)}); isPlaying = true; playButton.textContent = 'Stop'; playButton.classList.replace('bg-green-600', 'bg-red-600'); }
+            });
+        }
+        
+        (function init() {
+            document.querySelectorAll('.btn-tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.id.substring(4))));
+            switchTab('wizard');
+        })();
+    </script>
+</body>
+</html>
